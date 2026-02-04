@@ -117,19 +117,21 @@ vim.opt.showmode = false
 vim.schedule(function()
   vim.opt.clipboard = 'unnamedplus'
 end)
-vim.g.clipboard = {
-  name = 'wsl-clipboard',
-  copy = {
-    ['+'] = 'wcopy',
-    ['*'] = 'wcopy',
-  },
-  paste = {
-    ['+'] = 'wpaste',
-    ['*'] = 'wpaste',
-  },
-  cache_enabled = true,
-}
-
+local is_wsl = os.getenv 'WSL_DISTRO_NAME' ~= nil
+if is_wsl then
+  vim.g.clipboard = {
+    name = 'wsl-clipboard',
+    copy = {
+      ['+'] = 'wcopy',
+      ['*'] = 'wcopy',
+    },
+    paste = {
+      ['+'] = 'wpaste',
+      ['*'] = 'wpaste',
+    },
+    cache_enabled = true,
+  }
+end
 -- Enable break indent
 vim.opt.breakindent = true
 
