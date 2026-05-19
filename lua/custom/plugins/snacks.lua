@@ -10,7 +10,6 @@ return {
     bigfile = { enabled = true },
     dashboard = { enabled = true },
     explorer = { enabled = true },
-    indent = { enabled = true },
     input = { enabled = true },
     picker = { enabled = true },
     notifier = { enabled = true },
@@ -19,11 +18,9 @@ return {
     scroll = { enabled = true },
     statuscolumn = { enabled = true },
     words = { enabled = true },
-    lazygit = { enabled = true },
+    lazygit = { enabled = true, configure = true },
     terminal = { enabled = true },
-    scratch = {
-      enabled = true,
-    },
+    scratch = { enabled = true },
     toggle = { enabled = true },
   },
   keys = {
@@ -105,14 +102,17 @@ return {
     {
       '<leader>tt',
       function()
-        Snacks.terminal(nil, { win = { position = 'float', border = 'rounded' } })
+        Snacks.terminal(nil, {
+          win = { position = 'float', border = 'rounded' },
+          interactive = false,
+        })
       end,
       desc = '[T]erminal',
     },
     {
       '<leader>tp',
       function()
-        Snacks.terminal('ipython', { win = { position = 'float', border = 'rounded' } })
+        Snacks.terminal('ipython', { win = { position = 'float', border = 'rounded' }, interactive = false })
       end,
       desc = '[T]erminal [P]ython',
     },
@@ -129,6 +129,20 @@ return {
         Snacks.picker.scratch()
       end,
       desc = '[S]earch S[c]cratches',
+    },
+    {
+      '<leader>gl',
+      function()
+        Snacks.lazygit.log()
+      end,
+      desc = '',
+    },
+    {
+      '<leader>go',
+      function()
+        Snacks.lazygit.open()
+      end,
+      desc = '',
     },
   },
 }
