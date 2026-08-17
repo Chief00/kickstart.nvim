@@ -144,5 +144,12 @@ return {
       end,
       desc = '',
     },
+    {
+      '<F6>',
+      function()
+        require('custom.modules.just_runner').run()
+      end,
+      desc = 'Pick and run just recipe',
+    },
   },
 }
