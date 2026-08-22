@@ -131,6 +131,13 @@ return {
       desc = '[S]earch S[c]cratches',
     },
     {
+      '<leader>sC',
+      function()
+        Snacks.picker.colorschemes()
+      end,
+      desc = '[S]earch [C]olorschemes',
+    },
+    {
       '<leader>gl',
       function()
         Snacks.lazygit.log()
