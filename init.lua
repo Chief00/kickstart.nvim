@@ -185,6 +185,9 @@ vim.keymap.set('n', '<Esc>', '<cmd>nohlsearch<CR>')
 -- Diagnostic keymaps
 vim.keymap.set('n', '<leader>q', vim.diagnostic.setloclist, { desc = 'Open diagnostic [Q]uickfix list' })
 
+-- Title Case the visual selection (`u` and `U` already lower/upper case it)
+vim.keymap.set('x', '<leader>c', [[:<C-u>keeppatterns '<,'>s/\%V\w\+/\u\L&/g<CR>:nohlsearch<CR>]], { desc = '[C]apitalize selection (Title Case)' })
+
 -- Exit terminal mode in the builtin terminal with a shortcut that is a bit easier
 -- for people to discover. Otherwise, you normally need to press <C-\><C-n>, which
 -- is not what someone will guess without a bit more experience.
@@ -492,13 +495,33 @@ require('lazy').setup({
 
           -- Fuzzy find all the symbols in your current document.
           --  Symbols are things like variables, functions, types, etc.
+          -- Snacks' default kind filter hides constants and variables; Python servers only report
+          -- module/class-level ones, so show them for Python
+          local symbol_filter = {
+            python = {
+              'Class',
+              'Constant',
+              'Constructor',
+              'Enum',
+              'Field',
+              'Function',
+              'Interface',
+              'Method',
+              'Module',
+              'Namespace',
+              'Package',
+              'Property',
+              'Struct',
+              'Variable',
+            },
+          }
           map('n', '<leader>ls', function()
-            Snacks.picker.lsp_symbols { keep_parents = true }
+            Snacks.picker.lsp_symbols { keep_parents = true, filter = symbol_filter }
           end, '[S]earch Document [S]ymbols')
 
           -- Alt keymap
           Snacks.keymap.set('n', '<leader>sS', function()
-            Snacks.picker.lsp_symbols { keep_parents = true }
+            Snacks.picker.lsp_symbols { keep_parents = true, filter = symbol_filter }
           end, { desc = '[S]earch Document [S]ymbols' })
 
           -- Fuzzy find all the symbols in your current workspace.
@@ -512,6 +535,10 @@ require('lazy').setup({
           --  Useful when you're not sure what type a variable is and you want to see
           --  the definition of its *type*, not where it was *defined*.
           map('n', 'glt', Snacks.picker.lsp_type_definitions, '[T]ype Definition')
+
+          -- Call hierarchy: who calls the function under your cursor, and what it calls.
+          map('n', 'glc', Snacks.picker.lsp_incoming_calls, 'Incoming [C]alls')
+          map('n', 'glC', Snacks.picker.lsp_outgoing_calls, 'Outgoing [C]alls')
 
           -- This function resolves a difference between neovim nightly (version 0.11) and stable (version 0.10)
           ---@param client vim.lsp.Client
@@ -553,6 +580,12 @@ require('lazy').setup({
                 vim.api.nvim_clear_autocmds { group = 'kickstart-lsp-highlight', buffer = event2.buf }
               end,
             })
+          end
+
+          -- Show code lenses (e.g. pyrefly's Run/Test actions) and run the one on this line
+          if client and client_supports_method(client, vim.lsp.protocol.Methods.textDocument_codeLens, event.buf) then
+            vim.lsp.codelens.enable(true, { bufnr = event.buf })
+            map('n', 'glx', vim.lsp.codelens.run, 'E[x]ecute Code Lens')
           end
 
           -- The following code creates a keymap to toggle inlay hints in your
@@ -629,13 +662,122 @@ require('lazy').setup({
       local servers = {
         -- clangd = {},
         -- gopls = {},
-        pyright = {
+        -- pyright = {
+        --   settings = {
+        --     python = {
+        --       venv = '.venv',
+        --       venvPath = '.',
+        --     },
+        --   },
+        -- },
+        -- basedpyright = {},
+        -- zuban = {},
+        pyrefly = {
           settings = {
             python = {
-              venv = '.venv',
-              venvPath = '.',
+              pyrefly = {
+                -- Check every file in the project, not just open buffers
+                diagnosticMode = 'workspace',
+                -- Show type errors even in projects without a pyrefly.toml / [tool.pyrefly]
+                displayTypeErrors = 'force-on',
+                -- Opt into the stricter checks (only used when no pyrefly config is found)
+                typeCheckingMode = 'strict',
+                -- Run/Test code lenses above `if __name__ == '__main__'` and tests
+                runnableCodeLens = true,
+              },
+              analysis = {
+                diagnosticMode = 'workspace',
+                inlayHints = {
+                  variableTypes = false,
+                  callArgumentNames = 'off',
+                  functionReturnTypes = true,
+                  pytestParameters = true,
+                },
+                autoImportCompletions = true,
+                -- Leave parentheses off: blink.cmp's auto_brackets already adds them
+                completeFunctionParens = false,
+                importFormat = 'absolute',
+                showHoverGoToLinks = true,
+              },
             },
           },
+          -- The Run/Test code lenses call client-side commands that only the VS Code
+          -- extension implements, so mirror them here in a terminal split
+          commands = (function()
+            local function python(cwd)
+              local venv = vim.env.VIRTUAL_ENV or (cwd and vim.fs.joinpath(cwd, '.venv'))
+              local venv_python = venv and vim.fs.joinpath(venv, 'bin', 'python')
+              if venv_python and vim.fn.executable(venv_python) == 1 then
+                return venv_python
+              end
+              return 'python3'
+            end
+            local function run(cmd, cwd)
+              Snacks.terminal(cmd, { cwd = cwd, auto_close = false, interactive = false })
+            end
+            return {
+              ['pyrefly.runMain'] = function(command)
+                local args = command.arguments[1]
+                run({ python(args.cwd), vim.uri_to_fname(args.uri) }, args.cwd)
+              end,
+              ['pyrefly.runTest'] = function(command)
+                local args = command.arguments[1]
+                local file = vim.uri_to_fname(args.uri)
+                local parts = vim.tbl_filter(function(part)
+                  return part ~= nil
+                end, { args.className, args.testName })
+                if args.isUnittest then
+                  local module = vim.fs.relpath(args.cwd, file):gsub('%.py$', ''):gsub('/', '.')
+                  run({ python(args.cwd), '-m', 'unittest', table.concat({ module, unpack(parts) }, '.') }, args.cwd)
+                else
+                  run({ python(args.cwd), '-m', 'pytest', table.concat({ file, unpack(parts) }, '::') }, args.cwd)
+                end
+              end,
+            }
+          end)(),
+        },
+        -- ty = {
+        --   settings = {
+        --     ty = {
+        --       -- Check every file in the project, not just open buffers
+        --       diagnosticMode = 'workspace',
+        --       inlayHints = { variableTypes = false, callArgumentNames = false },
+        --       -- Leave parentheses off: blink.cmp's auto_brackets already adds them
+        --       completions = { autoImport = true, completeFunctionParentheses = false },
+        --       configuration = {
+        --         -- Opt into the stricter checks ty leaves off by default
+        --         rules = {
+        --           ['possibly-unresolved-reference'] = 'warn',
+        --           ['possibly-missing-attribute'] = 'warn',
+        --           ['possibly-missing-import'] = 'warn',
+        --           ['division-by-zero'] = 'warn',
+        --           ['missing-type-argument'] = 'warn',
+        --           ['redundant-condition-strict'] = 'warn',
+        --           ['disjoint-cast'] = 'warn',
+        --           ['unsound-assignment'] = 'warn',
+        --           ['unsound-return-statement'] = 'warn',
+        --           ['unsound-yield'] = 'warn',
+        --           ['blanket-ignore-comment'] = 'warn',
+        --         },
+        --       },
+        --     },
+        --   },
+        -- },
+        ruff = {
+          init_options = {
+            settings = {
+              -- pyrefly already reports syntax errors
+              showSyntaxErrors = false,
+              lint = {
+                -- Added on top of the ruff config in pyproject.toml / ruff.toml
+                extendSelect = { 'W', 'I', 'N', 'B', 'UP', 'SIM', 'C4', 'PERF', 'RUF' },
+              },
+            },
+          },
+          on_attach = function(client)
+            -- Leave hover to pyrefly
+            client.server_capabilities.hoverProvider = false
+          end,
         },
         -- rust_analyzer = {},
         -- ... etc. See `:help lspconfig-all` for a list of all the pre-configured LSPs
@@ -646,6 +788,8 @@ require('lazy').setup({
         -- But for many setups, the LSP (`ts_ls`) will work just fine
         -- ts_ls = {},
         --
+
+        ols = {},
 
         lua_ls = {
           -- cmd = { ... },
@@ -682,19 +826,16 @@ require('lazy').setup({
       })
       require('mason-tool-installer').setup { ensure_installed = ensure_installed }
 
+      -- mason-lspconfig v2 ignores `handlers`: it calls vim.lsp.enable() on every
+      -- installed server, so overrides must be registered with vim.lsp.config() first
+      for server_name, server in pairs(servers) do
+        server.capabilities = vim.tbl_deep_extend('force', {}, capabilities, server.capabilities or {})
+        vim.lsp.config(server_name, server)
+      end
+
       require('mason-lspconfig').setup {
         ensure_installed = {}, -- explicitly set to an empty table (Kickstart populates installs via mason-tool-installer)
         automatic_installation = false,
-        handlers = {
-          function(server_name)
-            local server = servers[server_name] or {}
-            -- This handles overriding only values explicitly passed
-            -- by the server configuration above. Useful when disabling
-            -- certain features of an LSP (for example, turning off formatting for ts_ls)
-            server.capabilities = vim.tbl_deep_extend('force', {}, capabilities, server.capabilities or {})
-            require('lspconfig')[server_name].setup(server)
-          end,
-        },
       }
     end,
   },
@@ -766,6 +907,9 @@ require('lazy').setup({
             'rafamadriz/friendly-snippets',
             config = function()
               require('luasnip.loaders.from_vscode').lazy_load()
+              -- Personal snippets, one `<filetype>.lua` per language in `snippets/`.
+              --  See `:help luasnip-loaders` and `snippets/odin.lua` for the format.
+              require('luasnip.loaders.from_lua').lazy_load { paths = { vim.fn.stdpath 'config' .. '/snippets' } }
             end,
           },
         },
